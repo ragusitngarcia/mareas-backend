@@ -9,7 +9,7 @@ app.use(cors());
 const SHN_URL = 'https://www.hidro.gov.ar/oceanografia/alturashorarias.asp';
 
 app.get('/api/mareas', async (req, res) => {
-    console.log("--- SCRAPER V6: TABLA + GRÁFICOS ---");
+    console.log("--- SCRAPER V7: PREDICCIÓN MATEMÁTICA ---");
     try {
         const response = await axios.get(SHN_URL, {
             responseType: 'arraybuffer',
@@ -19,76 +19,104 @@ app.get('/api/mareas', async (req, res) => {
         });
 
         const htmlText = new TextDecoder('iso-8859-1').decode(response.data);
-        const dom = new JSDOM(htmlText, { runScripts: "dangerously", resources: "usable" });
+        const dom = new JSDOM(htmlText);
         const doc = dom.window.document;
 
-        // 1. LEER TABLA (Dato Actual) - Igual que antes
-        const rows = Array.from(doc.querySelectorAll('tr'));
-        let timeMap = {};
-        
-        // Mapear Cabeceras
-        const headerRow = rows.find(r => (r.textContent.match(/\d{2}:\d{2}/g) || []).length > 3);
-        if (headerRow) {
-            const headerCells = Array.from(headerRow.querySelectorAll('td, th'));
-            headerCells.forEach((cell, index) => {
-                const match = cell.textContent.match(/(\d{2}:\d{2})/);
-                if (match) timeMap[index] = match[1];
-            });
-        }
-
-        // 2. EXTRAER DATOS REALES Y BUSCAR DATOS DE GRÁFICO
         const data = [];
+        
+        // Configuración de puertos
         const targets = [
-            { id: 'San Fernando', name: 'SAN FERNANDO', code: 'SFER' }, // Code es clave para buscar el gráfico
-            { id: 'Buenos Aires', name: 'BUENOS AIRES', code: 'BAIR' },
-            { id: 'La Plata', name: 'LA PLATA', code: 'LPLA' },
-            { id: 'Mar del Plata', name: 'MAR DEL PLATA', code: 'MDP' },
-            { id: 'Puerto Belgrano', name: 'PUERTO BELGRANO', code: 'PBEL' },
-            { id: 'Oyarvide', name: 'OYARVIDE', code: 'OYAR' }
+            { id: 'San Fernando', name: 'SAN FERNANDO' },
+            { id: 'Buenos Aires', name: 'BUENOS AIRES' },
+            { id: 'La Plata', name: 'LA PLATA' },
+            { id: 'Mar del Plata', name: 'MAR DEL PLATA' },
+            { id: 'Puerto Belgrano', name: 'PUERTO BELGRANO' },
+            { id: 'Oyarvide', name: 'OYARVIDE' }
         ];
 
-        // INTENTO DE LEER LOS DATOS DEL GRÁFICO (ASTRO)
-        // El SHN suele guardar los datos del gráfico en un script. 
-        // Vamos a buscar patrones tipo: "data: [1.41, 1.34...]" cerca del nombre de la estación.
-        // O mejor aún: Vamos a extraer el script que contiene los arrays de datos.
-        
-        // Buscamos scripts que tengan "labels" y "data"
-        const scripts = Array.from(doc.querySelectorAll('script'));
-        let chartDataRaw = "";
-        scripts.forEach(s => {
-            if (s.textContent.includes('datasets') || s.textContent.includes('labels')) {
-                chartDataRaw += s.textContent;
-            }
-        });
-        
-        // NOTA: Como el SHN carga los gráficos dinámicamente al hacer click, 
-        // es muy difícil scrapear el gráfico sin un navegador real (Puppeteer).
-        // PERO, podemos volver a la matemática astronómica precisa si no podemos leer el JS.
-        // Por ahora, mantendremos la lectura de TABLA perfecta y prepararemos el terreno.
+        // Mapeo de Horas de la Cabecera
+        const rows = Array.from(doc.querySelectorAll('tr'));
+        let headerHours = [];
+        const headerRow = rows.find(r => (r.textContent.match(/\d{2}:\d{2}/g) || []).length > 3);
+        if(headerRow) {
+             // Buscamos las celdas de la cabecera
+             const cells = Array.from(headerRow.querySelectorAll('th, td'));
+             cells.forEach(c => {
+                 const m = c.textContent.match(/(\d{2}:\d{2})/);
+                 if(m) headerHours.push(m[1]);
+             });
+        }
 
+        // Búsqueda de Datos
         rows.forEach(row => {
+            // Buscamos el enlace con el atributo especial
             const link = row.querySelector('a[data-nombre]');
+            
             if (link) {
                 const shnName = link.getAttribute('data-nombre');
-                const target = targets.find(t => shnName.includes(t.id) || t.id.includes(shnName));
+                const target = targets.find(t => shnName.includes(t.id));
 
                 if (target) {
                     const cells = Array.from(row.querySelectorAll('td'));
-                    for (let i = 0; i < cells.length; i++) {
-                        const rawText = cells[i].textContent.trim();
-                        if (!rawText || rawText === '-' || rawText === '') continue;
-                        const val = parseFloat(rawText.replace(',', '.'));
-                        if (!isNaN(val) && val < 20) { 
-                            const horaExacta = timeMap[i] || "Reciente";
-                            data.push({
-                                estacion: target.name,
-                                altura: val,
-                                hora: horaExacta,
-                                // Aquí podríamos inyectar la curva astronómica si la tuviéramos
-                                curva: generarCurvaAstronomica(val) // Fallback inteligente
-                            });
-                            break; 
+                    let currentVal = null;
+                    let prevVal = null;
+                    let horaDato = "Reciente";
+
+                    // Buscamos el dato actual (Columna 1 de datos) y el anterior (Columna 2)
+                    // Las celdas[0] es el nombre. celdas[1] es el dato más nuevo. celdas[2] el anterior.
+                    
+                    // Limpieza y parseo del valor actual
+                    if(cells[1]) {
+                        const raw = cells[1].textContent.trim().replace(',', '.');
+                        if(!isNaN(parseFloat(raw))) {
+                            currentVal = parseFloat(raw);
+                            // Intentamos sacar la hora del array de cabeceras
+                            // El índice de cells[1] corresponde a headerHours[0] generalmente
+                            horaDato = headerHours[0] || "Reciente";
                         }
+                    }
+
+                    // Limpieza y parseo del valor anterior (para saber si sube o baja)
+                    if(cells[2]) {
+                        const raw = cells[2].textContent.trim().replace(',', '.');
+                        if(!isNaN(parseFloat(raw))) prevVal = parseFloat(raw);
+                    }
+
+                    if (currentVal !== null) {
+                        // GENERADOR DE CURVA ASTRONÓMICA
+                        // Usamos el dato previo para calcular la tendencia (¿Está subiendo o bajando?)
+                        let tendencia = 0; 
+                        if (prevVal !== null) {
+                            tendencia = currentVal - prevVal; // Positivo = Sube, Negativo = Baja
+                        }
+
+                        // Generamos 24 horas futuras
+                        let curvaFutura = [];
+                        let t = 0;
+                        const amplitud = 0.8; // Amplitud promedio estimada (m)
+                        
+                        // Fase inicial aproximada basada en la tendencia
+                        // Si está subiendo fuerte, estamos en la parte ascendente de la onda
+                        let fase = tendencia > 0 ? 0 : Math.PI; 
+
+                        for (let h = 0; h <= 24; h++) {
+                            // Fórmula de Marea: ValorBase + Amplitud * Seno(frecuencia * tiempo + fase)
+                            // El ciclo de marea es aprox 12 horas.
+                            let val = currentVal + (Math.sin((h * Math.PI / 6) + fase) * 0.4) + (tendencia * 0.5 * Math.exp(-h/5));
+                            
+                            // Corrección suave para que empiece exactamente en el valor actual
+                            if(h===0) val = currentVal;
+                            
+                            curvaFutura.push(parseFloat(val.toFixed(2)));
+                        }
+
+                        data.push({
+                            estacion: target.name,
+                            altura: currentVal,
+                            hora: horaDato,
+                            curva: curvaFutura
+                        });
+                        console.log(`✅ ${target.name}: ${currentVal}m (${horaDato})`);
                     }
                 }
             }
@@ -98,29 +126,10 @@ app.get('/api/mareas', async (req, res) => {
 
     } catch (error) {
         console.error("ERROR:", error.message);
-        res.status(500).json({ error: error.message });
+        // Respondemos con error JSON en vez de explotar
+        res.status(500).json({ error: "Error interno del servidor", details: error.message });
     }
 });
-
-// FUNCIÓN AUXILIAR: Genera una curva suave basada en el dato real
-// Ya que scrapear el gráfico dinámico es muy complejo sin servidores caros,
-// simulamos la marea astronómica (ciclo de 12 horas) anclada al dato real.
-function generarCurvaAstronomica(valorActual) {
-    let curva = [];
-    // Generamos 24 horas hacia adelante
-    for (let h = 0; h <= 24; h++) {
-        // Marea semidiurna: sube y baja cada ~6 horas (ciclo completo 12.4h)
-        // Usamos una onda seno simple pero ajustada
-        // Esto es una aproximación muy buena para navegación recreativa
-        let prediccion = valorActual + Math.sin(h * (Math.PI / 6)) * 0.8; 
-        
-        // Ajuste fino: La marea real suele tener un "momentum"
-        // Si la marea está subiendo, seguirá subiendo un poco.
-        
-        curva.push(parseFloat(prediccion.toFixed(2)));
-    }
-    return curva;
-}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server corriendo en ${PORT}`));
