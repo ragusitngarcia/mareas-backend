@@ -2,7 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const { JSDOM } = require('jsdom');
-const cron = require('node-cron'); // NUEVO: El reloj despertador
+const cron = require('node-cron');
 
 const app = express();
 app.use(cors());
@@ -11,7 +11,7 @@ app.use(cors());
 const API_SHN = 'https://www.hidro.gov.ar/api/v1/AlturasHorarias';
 const URL_PRONOSTICO = 'http://www.hidro.gov.ar/oceanografia/pronostico.asp';
 
-// --- TUS CREDENCIALES DE TELEGRAM ---
+// --- CREDENCIALES DE TELEGRAM ---
 const TELEGRAM_TOKEN = '8477421452:AAFSsg_sUrbjTzq3cXN5sj72b7DkPUP9LIQ';
 const TELEGRAM_CHAT_ID = '8500014412';
 
@@ -30,7 +30,7 @@ const ID_MAP = {
 // 1. FUNCIÓN PRINCIPAL: MAPA Y SLIDER
 // ==========================================
 app.get('/api/mareas', async (req, res) => {
-    console.log("--- LECTURA DE MAREAS (USUARIO EN LA WEB) ---");
+    console.log("--- LECTURA DE MAREAS (WEB) ---");
     try {
         const [respApi, respPron] = await Promise.all([
             axios.get(API_SHN, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }, timeout: 10000 }),
@@ -152,7 +152,7 @@ async function enviarTelegram(mensaje) {
     const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
     try {
         await axios.post(url, { chat_id: TELEGRAM_CHAT_ID, text: mensaje, parse_mode: 'HTML' });
-        console.log("✅ Mensaje de Telegram enviado a Rodolfo!");
+        console.log("✅ Mensaje de Telegram enviado!");
     } catch (error) {
         console.error("❌ Error enviando Telegram:", error.message);
     }
@@ -167,17 +167,16 @@ async function chequearMareaBasica(puertoID) {
     } catch (e) { return null; }
 }
 
-// ⏰ ALERTA CLUB: Martes, Miércoles y Viernes a las 15:00 hs
-// Zona horaria de Buenos Aires para evitar errores de UTC de Render
-cron.schedule('0 15 * * 2,3,5', async () => {
-    console.log("Ejecutando revisión de marea para el Club...");
+// ⏰ ALERTA 1: Martes (2), Miércoles (3) y Viernes (5) a las 17:00 hs
+cron.schedule('0 17 * * 2,3,5', async () => {
+    console.log("Ejecutando revisión de marea (Días de semana)...");
     const datos = await chequearMareaBasica('SFER'); 
     
     if (datos && datos.astronomica) {
-        // Ajustamos la fecha de búsqueda al uso horario correcto
         const hoy = new Date().toLocaleString("sv-SE", { timeZone: "America/Argentina/Buenos_Aires" }).split(' ')[0];
-        let mareaAltaDetectada = false;
-        let picoMaximo = 0;
+        
+        let resumenHoras = "";
+        let alertaInundacion = false;
 
         datos.astronomica.forEach(item => {
             const fechaDato = item[0]; 
@@ -185,49 +184,61 @@ cron.schedule('0 15 * * 2,3,5', async () => {
             
             if (fechaDato.includes(hoy)) {
                 const hora = parseInt(fechaDato.split('T')[1].split(':')[0]); 
-                // CRITERIO: Entre 18h y 21h, mayor a 1.50m
-                if (hora >= 18 && hora <= 21 && altura >= 1.50) {
-                    mareaAltaDetectada = true;
-                    if (altura > picoMaximo) picoMaximo = altura;
+                const minutos = fechaDato.split('T')[1].split(':')[1];
+                
+                // Extraer datos entre las 18hs y las 21hs
+                if (hora >= 18 && hora <= 21) {
+                    resumenHoras += `🔹 ${hora}:${minutos} hs -> <b>${altura}m</b>\n`;
+                    if (altura > 2.00) {
+                        alertaInundacion = true;
+                    }
                 }
             }
         });
 
-        if (mareaAltaDetectada) {
-            enviarTelegram(`🚨 <b>¡Atención Entrenamiento TBC!</b>\nHoy la marea estará alta (Pico de ${picoMaximo}m entre las 18h y 21h).\n\n🚗 <i>Acordate de estacionar lejos del agua.</i>`);
+        if (resumenHoras !== "") {
+            let mensaje = `🚣‍♂️ <b>Aviso de Mareas - TBC</b>\nAlturas proyectadas para esta tarde/noche:\n\n${resumenHoras}\n`;
+            
+            if (alertaInundacion) {
+                mensaje += `🚨 <b>¡ATENCIÓN!</b> La marea superará los 2.00m en ese rango horario. Estacionar lejos y tomar precauciones.`;
+            } else {
+                mensaje += `✅ Niveles normales. ¡Buen entrenamiento!`;
+            }
+            
+            enviarTelegram(mensaje);
         }
     }
 }, { timezone: "America/Argentina/Buenos_Aires" });
 
 
-// ⏰ ALERTA REMO: Sábados a las 08:00 hs
-cron.schedule('0 8 * * 6', async () => {
-    console.log("Ejecutando revisión de marea para Remar...");
+// ⏰ ALERTA 2: Sábados (6) y Domingos (0) a las 08:00 hs
+cron.schedule('0 8 * * 0,6', async () => {
+    console.log("Ejecutando revisión de marea (Fin de semana)...");
     const datos = await chequearMareaBasica('SFER'); 
     
     if (datos && datos.astronomica) {
         const hoy = new Date().toLocaleString("sv-SE", { timeZone: "America/Argentina/Buenos_Aires" }).split(' ')[0];
-        let horariosOptimos = [];
+        
+        let resumenHoras = "";
 
         datos.astronomica.forEach(item => {
             const fechaDato = item[0];
             const altura = item[1];
             
             if (fechaDato.includes(hoy)) {
-                const horaCompleta = fechaDato.split('T')[1]; 
-                // CRITERIO: Marea entre 1.00m y 1.40m
-                if (altura >= 1.00 && altura <= 1.40) {
-                    horariosOptimos.push(`${horaCompleta} hs -> ${altura}m`);
+                const hora = parseInt(fechaDato.split('T')[1].split(':')[0]);
+                const minutos = fechaDato.split('T')[1].split(':')[1];
+                
+                // Extraer datos entre las 08hs y las 12hs
+                if (hora >= 8 && hora <= 12) {
+                    resumenHoras += `🔹 ${hora}:${minutos} hs -> <b>${altura}m</b>\n`;
                 }
             }
         });
 
-        if (horariosOptimos.length > 0) {
-            let mensaje = `🚣‍♂️ <b>¡Está lindo para salir a remar!</b>\nLa marea en Tigre/San Fernando estará en altura óptima hoy en estos horarios:\n\n`;
-            horariosOptimos.forEach(h => mensaje += `✅ ${h}\n`);
+        if (resumenHoras !== "") {
+            let mensaje = `🚣‍♂️ <b>Aviso de Mareas - Fin de Semana</b>\nAlturas proyectadas para esta mañana:\n\n${resumenHoras}\n¡Buena remada!`;
             enviarTelegram(mensaje);
-        } else {
-            enviarTelegram(`🚣‍♂️ <i>Aviso de Remo: Hoy los niveles de marea no parecen los ideales (fuera del rango 1.00m - 1.40m). Revisá el mapa antes de salir.</i>`);
         }
     }
 }, { timezone: "America/Argentina/Buenos_Aires" });
