@@ -11,9 +11,9 @@ app.use(cors());
 const API_SHN = 'https://www.hidro.gov.ar/api/v1/AlturasHorarias';
 const URL_PRONOSTICO = 'http://www.hidro.gov.ar/oceanografia/pronostico.asp';
 
-// --- CREDENCIALES DE TELEGRAM ---
+// --- CREDENCIALES DE TELEGRAM (CANAL MAREAS ARGENTINAS) ---
 const TELEGRAM_TOKEN = '8477421452:AAFSsg_sUrbjTzq3cXN5sj72b7DkPUP9LIQ';
-const TELEGRAM_CHAT_ID = '8500014412';
+const TELEGRAM_CHAT_ID = '-1003776128489'; // ID de tu Canal Oficial
 
 const ID_MAP = {
     'SFER': 'San Fernando',
@@ -152,7 +152,7 @@ async function enviarTelegram(mensaje) {
     const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
     try {
         await axios.post(url, { chat_id: TELEGRAM_CHAT_ID, text: mensaje, parse_mode: 'HTML' });
-        console.log("✅ Mensaje de Telegram enviado!");
+        console.log("✅ Mensaje de Telegram enviado al Canal!");
     } catch (error) {
         console.error("❌ Error enviando Telegram:", error.message);
     }
@@ -242,6 +242,16 @@ cron.schedule('0 8 * * 0,6', async () => {
         }
     }
 }, { timezone: "America/Argentina/Buenos_Aires" });
+
+
+// ==========================================
+// RUTA DE PRUEBA MANUAL PARA TELEGRAM
+// ==========================================
+app.get('/api/test-bot', async (req, res) => {
+    console.log("Forzando mensaje de prueba al canal...");
+    await enviarTelegram("🤖 <b>¡Test Exitoso!</b>\nEl sistema de Mareas Argentinas está conectado correctamente a este canal. ¡Bienvenidos!");
+    res.send("¡Mensaje disparado! Revisá tu Canal de Telegram.");
+});
 
 // ==========================================
 // INICIO DEL SERVIDOR
