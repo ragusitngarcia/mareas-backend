@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Mareas Argentinas</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* TUS ESTILOS ORIGINALES INTACTOS */
+        :root { --bg: #0f172a; --glass: rgba(15, 23, 42, 0.95); --glass-future: rgba(8, 47, 73, 0.95); --accent: #38bdf8; --text: #f8fafc; --shn-color: #22c55e; --est-color: #f59e0b; }
+        body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+        #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(15,23,42,0) 25%, rgba(15,23,42,0.8) 100%); pointer-events: none; z-index: 1; }
+        .ui-layer { position: relative; z-index: 10; flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 15px; pointer-events: none; }
+        .interactive { pointer-events: auto; }
+        .header-card { background: var(--glass); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; backdrop-filter: blur(10px); box-shadow: 0 4px 20px rgba(0,0,0,0.3); transition: border-color 0.3s; }
+        .station-title { font-size: 0.9rem; font-weight: 800; color: var(--accent); text-transform: uppercase; margin: 0; }
+        .status-badge { font-size: 0.65rem; padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: bold; border: 1px solid transparent; transition: all 0.3s; }
+        .status-shn { background: rgba(34, 197, 94, 0.2); color: var(--shn-color); border-color: var(--shn-color); }
+        .status-est { background: rgba(245, 158, 11, 0.2); color: var(--est-color); border-color: var(--est-color); }
+        .weather-box { text-align: right; }
+        .temp-val { font-size: 1.5rem; font-weight: 300; line-height: 1; }
+        .weather-desc { font-size: 0.7rem; opacity: 0.7; }
+        .hero { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        .tide-val { font-size: 5.5rem; font-weight: 800; line-height: 0.9; letter-spacing: -3px; text-shadow: 0 10px 40px rgba(0,0,0,0.5); transition: color 0.3s; }
+        .tide-unit { font-size: 2rem; font-weight: 300; opacity: 0.6; }
+        .wind-pill { display: flex; align-items: center; gap: 15px; background: rgba(0,0,0,0.6); margin-top: 20px; padding: 8px 24px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(10px); }
+        .wind-circle { width: 40px; height: 40px; background: var(--accent); border-radius: 50%; display: flex; justify-content: center; align-items: center; box-shadow: 0 0 15px rgba(56, 189, 248, 0.4); transition: transform 0.3s ease-out; }
+        .nav-arrow { width: 20px; height: 20px; fill: #0f172a; }
+        .controls { background: var(--glass); border-radius: 24px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); position: relative; transition: background 0.3s; }
+        .time-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 10px; }
+        .time-display { font-size: 1.4rem; font-weight: 700; color: white; line-height: 1; font-variant-numeric: tabular-nums; }
+        .time-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; }
+        .btn-reset { position: absolute; top: -45px; left: 50%; transform: translateX(-50%) scale(0); background: var(--accent); color: #0f172a; border: none; padding: 8px 16px; border-radius: 30px; font-weight: 700; box-shadow: 0 0 15px rgba(56, 189, 248, 0.5); cursor: pointer; transition: all 0.3s; font-size: 0.8rem; z-index: 20; }
+        .btn-reset.visible { transform: translateX(-50%) scale(1); }
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; height: 30px; position: relative; z-index: 5; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; background: rgba(255,255,255,0.2); border-radius: 3px; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 26px; width: 26px; background: white; border: 4px solid var(--accent); border-radius: 50%; margin-top: -10px; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+        .ticks { display: flex; justify-content: space-between; margin-top: 5px; font-size: 0.65rem; color: rgba(255,255,255,0.4); }
+        .loader { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.9); padding: 20px; border-radius: 12px; z-index: 100; text-align: center; font-size: 0.8rem; transition: opacity 0.3s; }
+        .spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,0.1); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s infinite linear; margin: 0 auto 10px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .hidden { opacity: 0; pointer-events: none; }
+        body.is-future .header-card { border-color: var(--accent); background: var(--glass-future); }
+        body.is-future .controls { background: var(--glass-future); }
+        body.is-future .tide-val { color: var(--accent); opacity: 0.9; }
+        .pin { width: 14px; height: 14px; background: var(--col); border: 2px solid white; border-radius: 50%; box-shadow: 0 0 10px var(--col); cursor: pointer; transition: transform 0.2s; }
+        .pin.active { transform: scale(1.8); border-color: #0f172a; box-shadow: 0 0 20px var(--col); }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="overlay"></div>
+    <div class="loader" id="loader"><div class="spinner"></div><div id="loader-txt">CONECTANDO A RENDER...</div></div>
+    <div class="ui-layer">
+        <div class="header-card interactive">
+            <div><h1 class="station-title" id="ui-name">San Fernando</h1><div class="status-badge status-est" id="ui-source">INICIANDO...</div></div>
+            <div class="weather-box"><div class="temp-val" id="ui-temp">--°</div><div class="weather-desc" id="ui-wdesc">--</div></div>
+        </div>
+        <div class="hero">
+            <div class="tide-val" id="ui-tide">--<span class="tide-unit">m</span></div>
+            <div class="wind-pill">
+                <div class="wind-circle" id="ui-arrow"><svg class="nav-arrow" viewBox="0 0 24 24"><path d="M12 2L4.5 20.29C4.24 20.89 4.86 21.5 5.46 21.21L12 18L18.54 21.21C19.14 21.5 19.76 20.89 19.5 20.29L12 2Z"/></svg></div>
+                <div style="text-align: left;"><span style="display:block; font-weight:700; font-size:1rem;" id="ui-wind">-- km/h</span><span style="display:block; font-size:0.7rem; opacity:0.8;" id="ui-dir">--</span></div>
+            </div>
+        </div>
+        <div class="controls interactive">
+            <button class="btn-reset" id="btn-reset" onclick="resetToReal()">VOLVER AL ÚLTIMO DATO</button>
+            <div class="time-header">
+                <div><span class="time-label" id="time-label-top">Registro Real</span><div class="time-display" id="ui-time">--:--</div></div>
+            </div>
+            <input type="range" min="0" max="24" step="1" value="0" id="slider" oninput="updatePredict(this.value)">
+            <div class="ticks"><span id="tick-start">Registro</span><span>+12h</span><span>+24h</span></div>
+        </div>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const API_URL = 'https://mareas-backend-k7ou.onrender.com/api/mareas';
+
+        const stations = [
+            { id: 'sf', name: 'San Fernando', rssKey: 'SAN FERNANDO', lat: -34.44, lng: -58.55, amp: 0.8, color: '#38bdf8' },
+            { id: 'ba', name: 'Buenos Aires', rssKey: 'BUENOS AIRES', lat: -34.59, lng: -58.36, amp: 0.9, color: '#a855f7' },
+            { id: 'lp', name: 'La Plata', rssKey: 'LA PLATA', lat: -34.84, lng: -57.90, amp: 0.9, color: '#d946ef' },
+            { id: 'mdq', name: 'Mar del Plata', rssKey: 'MAR DEL PLATA', lat: -38.03, lng: -57.53, amp: 1.5, color: '#f59e0b' },
+            { id: 'bb', name: 'Bahía Blanca', rssKey: 'PUERTO BELGRANO', lat: -38.89, lng: -62.10, amp: 3.5, color: '#3b82f6' }
+        ];
+
+        let map, currentSt = stations[0];
+        let weatherData = [];
+        let shnTide = null; // { val, hora: "20:45", curva: [1.70, 1.80, ...] }
+
+        function init() {
+            map = L.map('map', { zoomControl: false, attributionControl: false }).setView([-34.5, -58.5], 10);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+            stations.forEach(s => {
+                const icon = L.divIcon({ className: 'custom', html: `<div class="pin" id="pin-${s.id}" style="--col: ${s.color}"></div>`, iconSize: [14, 14] });
+                L.marker([s.lat, s.lng], {icon: icon}).addTo(map).on('click', () => loadStation(s));
+            });
+            locateUser();
+        }
+
+        function locateUser() {
+            document.getElementById('loader-txt').innerText = "GEOLOCALIZANDO...";
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    pos => findNearest(pos.coords.latitude, pos.coords.longitude),
+                    err => loadStation(stations[0])
+                );
+            } else { loadStation(stations[0]); }
+        }
+
+        function findNearest(lat, lng) {
+            let min = Infinity, nearest = stations[0];
+            stations.forEach(s => {
+                const d = Math.sqrt(Math.pow(s.lat-lat, 2) + Math.pow(s.lng-lng, 2));
+                if(d < min) { min = d; nearest = s; }
+            });
+            loadStation(nearest);
+        }
+
+        async function loadStation(s) {
+            currentSt = s;
+            document.getElementById('ui-name').innerText = s.name;
+            document.querySelectorAll('.pin').forEach(p => p.classList.remove('active'));
+            document.getElementById(`pin-${s.id}`).classList.add('active');
+            map.flyTo([s.lat, s.lng], 12);
+            document.getElementById('loader').classList.remove('hidden');
+            try {
+                await fetchWeather(s);
+                await fetchRenderAPI(s);
+            } catch (e) { console.error(e); } 
+            finally {
+                resetToReal();
+                document.getElementById('loader').classList.add('hidden');
+            }
+        }
+
+        async function fetchRenderAPI(station) {
+            shnTide = null;
+            try {
+                const res = await fetch(API_URL);
+                const json = await res.json();
+                if (json.status === 'ok') {
+                    const found = json.data.find(d => d.estacion.toUpperCase().includes(station.rssKey));
+                    if (found) {
+                        shnTide = found;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        async function fetchWeather(s) {
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${s.lat}&longitude=${s.lng}&current_weather=true&hourly=temperature_2m,windspeed_10m,winddirection_10m,weathercode&forecast_days=2`;
+            const res = await fetch(url);
+            const data = await res.json();
+            const h = data.hourly;
+            const nowIdx = new Date().getHours();
+            weatherData = [];
+            for(let i=0; i<=24; i++) {
+                const idx = nowIdx + i;
+                if(h.time[idx]) {
+                    weatherData.push({
+                        temp: h.temperature_2m[idx],
+                        spd: h.windspeed_10m[idx],
+                        dir: h.winddirection_10m[idx],
+                        code: h.weathercode[idx]
+                    });
+                }
+            }
+        }
+
+        // --- LÓGICA DE RELOJ ---
+        function updatePredict(val) {
+            const hoursAdded = parseInt(val);
+            if (hoursAdded === 0) { resetToReal(); return; }
+
+            document.body.classList.add('is-future');
+            document.getElementById('btn-reset').classList.add('visible');
+
+            // CALCULAR HORA FUTURA RESPETANDO MINUTOS
+            let baseH = 0, baseM = 0;
+            if (shnTide && shnTide.hora && shnTide.hora.includes(':')) {
+                [baseH, baseM] = shnTide.hora.split(':').map(Number);
+            } else {
+                const now = new Date();
+                baseH = now.getHours();
+                baseM = now.getMinutes();
+            }
+
+            // Sumar horas
+            let futureH = (baseH + hoursAdded) % 24;
+            
+            // Formatear HH:MM
+            const hh = String(futureH).padStart(2, '0');
+            const mm = String(baseM).padStart(2, '0');
+            
+            document.getElementById('ui-time').innerText = `${hh}:${mm} hs`;
+            document.getElementById('time-label-top').innerText = "Pronóstico Astronómico";
+            document.getElementById('ui-source').innerText = "PRONÓSTICO";
+            document.getElementById('ui-source').className = "status-badge status-est";
+
+            // USAR LA CURVA DEL BACKEND
+            let prediction = 0;
+            if (shnTide && shnTide.curva && shnTide.curva[hoursAdded] !== undefined) {
+                prediction = shnTide.curva[hoursAdded];
+            } else {
+                let base = shnTide ? shnTide.altura : 0.8;
+                prediction = base + Math.sin(hoursAdded * (Math.PI / 6)) * 0.5;
+            }
+
+            document.getElementById('ui-tide').innerHTML = prediction.toFixed(2) + '<span class="tide-unit">m</span>';
+            const w = weatherData[hoursAdded] || weatherData[0];
+            updateWeatherUI(w);
+        }
+
+        function resetToReal() {
+            document.getElementById('slider').value = 0;
+            document.body.classList.remove('is-future');
+            document.getElementById('btn-reset').classList.remove('visible');
+
+            if(weatherData[0]) updateWeatherUI(weatherData[0]);
+
+            if (shnTide) {
+                document.getElementById('ui-tide').innerHTML = shnTide.altura.toFixed(2) + '<span class="tide-unit">m</span>';
+                document.getElementById('ui-time').innerText = shnTide.hora + " hs";
+                document.getElementById('time-label-top').innerText = "Último Registro Real";
+                document.getElementById('ui-source').innerText = "SHN: DATO REAL";
+                document.getElementById('ui-source').className = "status-badge status-shn";
+            } else {
+                document.getElementById('ui-tide').innerText = "--";
+                document.getElementById('ui-time').innerText = "Sin Datos";
+                document.getElementById('ui-source').className = "status-badge status-est";
+            }
+        }
+
+        function updateWeatherUI(w) {
+            if(!w) return;
+            document.getElementById('ui-temp').innerText = Math.round(w.temp) + "°";
+            document.getElementById('ui-wdesc').innerText = "Viento " + Math.round(w.spd) + " km/h";
+            document.getElementById('ui-wind').innerText = Math.round(w.spd) + " km/h";
+            const dirs = ['N','NE','E','SE','S','SO','O','NO'];
+            document.getElementById('ui-dir').innerText = dirs[Math.round(w.dir/45)%8];
+            document.getElementById('ui-arrow').style.transform = `rotate(${w.dir + 180}deg)`;
+        }
+
+        init();
+    </script>
+</body>
+</html>
