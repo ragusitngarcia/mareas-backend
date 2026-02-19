@@ -1,14 +1,14 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const { JSDOM } = require('jsdom');
 
 const app = express();
 app.use(cors());
 
-// URL OFICIAL API V1
-const API_URL = 'https://www.hidro.gov.ar/api/v1/AlturasHorarias';
+const API_SHN = 'https://www.hidro.gov.ar/api/v1/AlturasHorarias';
+const URL_PRONOSTICO = 'http://www.hidro.gov.ar/oceanografia/pronostico.asp';
 
-// MAPEO DE IDs (Tu app usa nombres, la API usa IDs como 'SFER')
 const ID_MAP = {
     'SFER': 'San Fernando',
     'BSAS': 'Buenos Aires',
@@ -21,101 +21,161 @@ const ID_MAP = {
 };
 
 app.get('/api/mareas', async (req, res) => {
-    console.log("--- CONSUMIENDO API OFICIAL (MODO ALINEADO) ---");
+    console.log("--- INICIANDO FUSIÓN METEOROLÓGICA ---");
     try {
-        const response = await axios.get(API_URL, {
-            headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json' 
-            },
-            timeout: 10000 
-        });
+        // 1. Peticiones simultáneas (API Base + Pronóstico Web)
+        const [respApi, respPron] = await Promise.all([
+            axios.get(API_SHN, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }, timeout: 10000 }),
+            axios.get(URL_PRONOSTICO, { responseType: 'arraybuffer', timeout: 10000 }).catch(() => null)
+        ]);
 
-        const geoJson = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+        // 2. Extraer Picos de Pronóstico Corregido
+        const picosCorregidos = {}; 
+        if (respPron) {
+            const htmlPron = new TextDecoder('iso-8859-1').decode(respPron.data);
+            const docPron = new JSDOM(htmlPron).window.document;
+            const tables = Array.from(docPron.querySelectorAll('table'));
+
+            tables.forEach(table => {
+                const rows = Array.from(table.querySelectorAll('tr'));
+                let currentPort = null;
+
+                rows.forEach(row => {
+                    const textoFila = row.textContent.toUpperCase();
+                    // Detectar de qué puerto estamos leyendo
+                    Object.values(ID_MAP).forEach(nombrePuerto => {
+                        if (textoFila.includes(nombrePuerto.toUpperCase())) currentPort = nombrePuerto;
+                    });
+
+                    if (currentPort) {
+                        const cells = Array.from(row.querySelectorAll('td'));
+                        if (cells.length >= 4) {
+                            const horaText = cells[2]?.textContent.trim(); // Ej: 14:30
+                            const altText = cells[3]?.textContent.trim().replace(',', '.'); // Ej: 1.50
+                            
+                            if (horaText && horaText.match(/\d{2}:\d{2}/) && !isNaN(parseFloat(altText))) {
+                                if (!picosCorregidos[currentPort]) picosCorregidos[currentPort] = [];
+                                
+                                // Crear objeto Date para el pico (asumiendo hoy o mañana)
+                                const [h, m] = horaText.split(':').map(Number);
+                                const fPico = new Date();
+                                fPico.setHours(h, m, 0, 0);
+                                if (fPico < new Date()) fPico.setDate(fPico.getDate() + 1); // Si ya pasó la hora, es de mañana
+
+                                picosCorregidos[currentPort].push({
+                                    hora: horaText,
+                                    fecha: fPico,
+                                    altura: parseFloat(altText)
+                                });
+                            }
+                        }
+                    }
+                });
+            });
+            console.log("Picos meteorológicos encontrados:", Object.keys(picosCorregidos).length, "puertos");
+        }
+
+        // 3. Procesar API Base y Aplicar Correcciones
+        const geoJson = typeof respApi.data === 'string' ? JSON.parse(respApi.data) : respApi.data;
         const data = [];
 
-        if (geoJson.features && Array.isArray(geoJson.features)) {
-            
+        if (geoJson.features) {
             geoJson.features.forEach(feature => {
-                // El ID viene en la raíz del feature (ej: "SFER") o en properties (a veces)
                 const id = feature.id || (feature.properties && feature.properties.id);
                 const props = feature.properties;
+                const nombrePuerto = ID_MAP[id];
                 
-                if (ID_MAP[id] && props) {
-                    
-                    // 1. DATO REAL (LECTURA)
-                    const currentVal = props.lectura; // Ej: 1.64
-                    const fechaStr = props.fecha;     // Ej: "2026-02-18T23:45"
-                    
+                if (nombrePuerto && props) {
+                    const currentVal = props.lectura;
+                    const fechaStr = props.fecha;
                     let lastTime = "Reciente";
-                    
+                    let lastDateObj = new Date();
+
                     if (fechaStr) {
-                        const dateObj = new Date(fechaStr);
-                        // Extraemos la hora HH:MM para mostrar en el frontend
-                        const hh = String(dateObj.getHours()).padStart(2, '0');
-                        const mm = String(dateObj.getMinutes()).padStart(2, '0');
+                        lastDateObj = new Date(fechaStr);
+                        const hh = String(lastDateObj.getHours()).padStart(2, '0');
+                        const mm = String(lastDateObj.getMinutes()).padStart(2, '0');
                         lastTime = `${hh}:${mm}`;
                     }
 
-                    // 2. CURVA ASTRONÓMICA (FUTURO)
-                    let curvaFutura = [];
-
-                    if (props.astronomica && Array.isArray(props.astronomica) && fechaStr) {
-                        
-                        // ALINEACIÓN CLAVE: 
-                        // Buscamos el índice exacto donde la fecha coincide con la del dato real.
-                        // Así curva[0] será la astronómica de "AHORA" (23:45)
-                        // y curva[1] será la astronómica de "+1h" (00:45) -> 1.25m
-                        
+                    // A. Extraer Curva Astronómica Base
+                    let astroCurva = [];
+                    if (props.astronomica) {
                         const startIndex = props.astronomica.findIndex(item => item[0] === fechaStr);
+                        const datosDesdeAhora = startIndex !== -1 ? props.astronomica.slice(startIndex) : props.astronomica.filter(item => item[0] >= fechaStr);
+                        astroCurva = datosDesdeAhora.slice(0, 25).map(item => item[1]);
+                    }
+                    while (astroCurva.length < 25) astroCurva.push(astroCurva[astroCurva.length - 1] || currentVal);
 
-                        let datosDesdeAhora = [];
-                        if (startIndex !== -1) {
-                            // Si encontramos la hora exacta, cortamos el array desde ahí
-                            datosDesdeAhora = props.astronomica.slice(startIndex);
+                    // B. MATEMÁTICA DE CORRECCIÓN (Desfasaje)
+                    let curvaCorregida = [...astroCurva];
+                    
+                    if (currentVal !== null) {
+                        // Desfasaje Actual (¿Cuánto está influyendo el clima AHORA?)
+                        const offsetActual = currentVal - astroCurva[0];
+                        
+                        // Buscar el próximo pico corregido para este puerto
+                        const picos = picosCorregidos[nombrePuerto] || [];
+                        // Ordenar por cercanía en el tiempo
+                        picos.sort((a, b) => a.fecha - b.fecha);
+                        const proximoPico = picos.find(p => p.fecha > lastDateObj);
+
+                        let offsetFuturo = offsetActual; // Por defecto mantenemos el error actual
+                        let horasAlPico = 6; // Por defecto la inercia climática dura ~6 horas
+
+                        if (proximoPico) {
+                            horasAlPico = (proximoPico.fecha - lastDateObj) / (1000 * 60 * 60);
+                            
+                            // Buscar qué valor astronómico tendríamos en ese momento exacto
+                            const idxAstro = Math.floor(horasAlPico);
+                            const fraccion = horasAlPico - idxAstro;
+                            let astroEnPico = astroCurva[0];
+                            if (idxAstro < 24) {
+                                // Interpolación lineal para sacar el valor exacto de la curva astronómica en el momento del pico
+                                astroEnPico = astroCurva[idxAstro] + (astroCurva[idxAstro+1] - astroCurva[idxAstro]) * fraccion;
+                            }
+                            
+                            // Desfasaje Futuro (¿Cuánto va a influir el clima en el PICO?)
+                            offsetFuturo = proximoPico.altura - astroEnPico;
                         } else {
-                            // Fallback: Si por algo no coinciden los segundos, buscamos >= fecha
-                            datosDesdeAhora = props.astronomica.filter(item => item[0] >= fechaStr);
+                            // Si no hay pronóstico (ej. Mar del Plata), asumimos que el error actual se desvanece suavemente a 0 en 12 horas
+                            offsetFuturo = 0;
+                            horasAlPico = 12;
                         }
 
-                        // Mapeamos solo a alturas (el frontend ya sabe calcular las horas)
-                        // Tomamos 25 puntos (0 a 24 horas)
-                        curvaFutura = datosDesdeAhora.slice(0, 25).map(item => item[1]);
-                    }
-
-                    // Relleno de seguridad por si faltan datos al final del array
-                    if (curvaFutura.length < 25) {
-                        const ultimo = curvaFutura.length > 0 ? curvaFutura[curvaFutura.length - 1] : (currentVal || 0);
-                        while (curvaFutura.length < 25) {
-                            curvaFutura.push(ultimo);
-                        }
-                    }
-
-                    // Log de Verificación para San Fernando
-                    if (id === 'SFER') {
-                        console.log(`🔎 CHECK SFER: HoraBase=${lastTime}.`);
-                        console.log(`   Real=${currentVal}. Astro[0] (Ahora)=${curvaFutura[0]}`);
-                        console.log(`   Astro[1] (+1h, debe ser 1.25)=${curvaFutura[1]}`); // ¡Acá veremos la verdad!
+                        // C. Aplicar la corrección punto por punto
+                        curvaCorregida = astroCurva.map((valAstro, idx) => {
+                            let peso = idx / horasAlPico;
+                            if (peso > 1) peso = 1; // Si pasamos del pico, mantenemos el offset futuro
+                            
+                            // Suavizado coseno para que la transición sea orgánica (sin picos rectos)
+                            const suavizado = (1 - Math.cos(peso * Math.PI)) / 2;
+                            
+                            const offsetInterpolado = offsetActual + (offsetFuturo - offsetActual) * suavizado;
+                            return parseFloat((valAstro + offsetInterpolado).toFixed(2));
+                        });
+                        
+                        // Asegurar que el punto 0 es exactamente el valor actual
+                        curvaCorregida[0] = currentVal;
                     }
 
                     data.push({
-                        estacion: ID_MAP[id],
-                        id_shn: id,
+                        estacion: nombrePuerto,
                         altura: currentVal !== null ? currentVal : 0,
                         hora: lastTime,
-                        curva: curvaFutura
+                        curva: curvaCorregida
                     });
                 }
             });
         }
 
-        res.json({ status: "ok", source: "SHN API V1", data: data });
+        res.json({ status: "ok", source: "API + Corrección Meteorológica", data: data });
 
     } catch (error) {
         console.error("ERROR CRÍTICO:", error.message);
-        res.status(500).json({ error: "Error API SHN", details: error.message });
+        res.status(500).json({ error: "Fallo Scraper", details: error.message });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Server listo en ${PORT}`));
