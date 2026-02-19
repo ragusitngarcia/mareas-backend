@@ -6,89 +6,105 @@ const { JSDOM } = require('jsdom');
 const app = express();
 app.use(cors());
 
-// AHORA APUNTAMOS A LA TABLA WEB (DATA FRESCA), NO AL RSS
+// URL OFICIAL (Tabla Web)
 const SHN_URL = 'https://www.hidro.gov.ar/oceanografia/alturashorarias.asp';
 
 app.get('/api/mareas', async (req, res) => {
+    console.log("--- Iniciando Scraper SHN ---");
     try {
-        // 1. Descargar el HTML de la web oficial
         const response = await axios.get(SHN_URL, {
             responseType: 'arraybuffer',
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36' 
             }
         });
-        
-        const htmlText = new TextDecoder('iso-8859-1').decode(response.data); // Decodificar tildes correctamente
+
+        // Decodificamos usando latin1 (iso-8859-1) que es lo que usa el SHN
+        const htmlText = new TextDecoder('iso-8859-1').decode(response.data);
         const dom = new JSDOM(htmlText);
         const doc = dom.window.document;
 
-        // 2. Analizar la Tabla
-        // Buscamos la tabla que tiene los datos. Generalmente es la única grande.
-        const rows = Array.from(doc.querySelectorAll('tr'));
         const data = [];
-
-        // Primero buscamos la fila de cabecera para tener las HORAS
-        let headerRow = rows.find(r => r.textContent.includes('Mareógrafo') && r.textContent.includes(':'));
-        let timeHeaders = [];
         
+        // Buscamos TODAS las filas de TODAS las tablas
+        const rows = Array.from(doc.querySelectorAll('tr'));
+        console.log(`Filas encontradas: ${rows.length}`);
+
+        // 1. Encontrar la cabecera con las horas
+        // Buscamos una fila que tenga números con formato de hora (ej: 21:45)
+        let timeHeaders = [];
+        let headerRow = rows.find(r => {
+            const text = r.textContent;
+            // Busca al menos dos patrones horarios seguidos para confirmar que es la cabecera
+            return /\d{2}:\d{2}.*\d{2}:\d{2}/.test(text);
+        });
+
         if (headerRow) {
-            // Extraer las horas de las columnas (ej: "21:45", "20:45")
-            // Limpiamos el texto para sacar fechas y dejar solo la hora HH:MM
-            const cells = Array.from(headerRow.querySelectorAll('th, td'));
+            console.log("Cabecera de horas encontrada.");
+            // Usamos 'td, th' porque a veces cambian el formato
+            const cells = Array.from(headerRow.querySelectorAll('td, th'));
             timeHeaders = cells.map(c => {
-                const txt = c.textContent.trim();
-                const match = txt.match(/(\d{2}:\d{2})/);
+                const match = c.textContent.match(/(\d{2}:\d{2})/);
                 return match ? match[1] : null;
             });
+        } else {
+            console.warn("ADVERTENCIA: No se encontró fila de cabecera de horas.");
         }
 
-        // 3. Buscar las filas de cada puerto
+        // 2. Extraer datos de los puertos
         rows.forEach(row => {
-            const cells = Array.from(row.querySelectorAll('td'));
-            if (cells.length > 0) {
-                const name = cells[0].textContent.trim().toUpperCase();
+            // Importante: Buscar tanto en TD como en TH
+            const cells = Array.from(row.querySelectorAll('td, th'));
+            
+            if (cells.length > 1) {
+                const rowText = cells[0].textContent.trim().toUpperCase(); // Primera celda es el nombre
                 
-                // Filtramos solo los puertos que nos interesan
-                if (['SAN FERNANDO', 'BUENOS AIRES', 'LA PLATA', 'MAR DEL PLATA', 'PUERTO BELGRANO', 'OYARVIDE'].some(k => name.includes(k))) {
+                // Lista de puertos que nos interesan
+                const targets = ['SAN FERNANDO', 'BUENOS AIRES', 'LA PLATA', 'MAR DEL PLATA', 'BELGRANO', 'OYARVIDE'];
+                
+                // Verificamos si esta fila es de uno de nuestros puertos
+                const esPuerto = targets.some(t => rowText.includes(t));
+
+                if (esPuerto) {
+                    console.log(`Procesando fila: ${rowText}`);
                     
-                    // Buscamos el primer valor numérico válido (de izquierda a derecha, que es lo más reciente)
-                    let foundVal = null;
-                    let foundTime = "Reciente";
-
+                    // Buscamos el primer valor numérico válido (ignorando la primera celda que es el nombre)
                     for (let i = 1; i < cells.length; i++) {
-                        const valText = cells[i].textContent.trim().replace(',', '.');
-                        const val = parseFloat(valText);
-                        
-                        if (!isNaN(val)) {
-                            foundVal = val;
-                            // Intentamos recuperar la hora del header correspondiente a esta columna
-                            if (timeHeaders[i]) {
-                                foundTime = timeHeaders[i];
-                            }
-                            break; // Ya tenemos el dato más reciente, paramos.
-                        }
-                    }
+                        // Limpieza agresiva: sacar espacios, convertir comas
+                        let valText = cells[i].textContent.trim().replace(',', '.');
+                        let val = parseFloat(valText);
 
-                    if (foundVal !== null) {
-                        data.push({
-                            estacion: name,
-                            altura: foundVal,
-                            hora: foundTime // Aquí enviamos la hora real (ej: "21:45")
-                        });
+                        if (!isNaN(val)) {
+                            // ¡Encontrado!
+                            // Intentamos pegar la hora correcta de la cabecera, si no "Reciente"
+                            let horaDato = (timeHeaders[i]) ? timeHeaders[i] : "Reciente";
+                            
+                            data.push({
+                                estacion: rowText, // Nombre original de la fila
+                                altura: val,
+                                hora: horaDato
+                            });
+                            break; // Solo queremos el dato más reciente (el primero que aparece)
+                        }
                     }
                 }
             }
         });
 
-        console.log("Datos scropeados:", data);
-        res.json({ status: "ok", data: data });
+        console.log(`Datos extraídos exitosamente: ${data.length}`);
+        
+        // Respuesta Final
+        res.json({ 
+            status: "ok", 
+            source: "SHN Web Scraper",
+            data: data 
+        });
 
     } catch (error) {
-        console.error("Error:", error.message);
-        res.status(500).json({ error: "Error leyendo SHN Web", details: error.message });
+        console.error("ERROR CRÍTICO:", error.message);
+        res.status(500).json({ error: "Fallo Scraper", details: error.message });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server corriendo en ${PORT}`));
+app.listen(PORT, () => console.log(`Server listo en puerto ${PORT}`));
