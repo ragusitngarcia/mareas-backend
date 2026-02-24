@@ -7,10 +7,9 @@ const cron = require('node-cron');
 const app = express();
 app.use(cors());
 
-// --- CONFIGURACIÓN DE APIS (AHORA CON INA) ---
+// --- CONFIGURACIÓN DE APIS (SHN + INA) ---
 const API_SHN = 'https://www.hidro.gov.ar/api/v1/AlturasHorarias';
 const URL_PRONOSTICO = 'http://www.hidro.gov.ar/oceanografia/pronostico.asp';
-// URL del INA extraída del análisis técnico (para San Fernando/Tigre - Series 26202)
 const API_INA = 'https://alerta.ina.gob.ar/pub/datos/datosProno?seriesId=26202&calId=432&all=false&siteCode=52&varId=2&format=json';
 
 // --- CREDENCIALES DE TELEGRAM ---
@@ -32,17 +31,13 @@ const ID_MAP = {
 // 1. FUNCIÓN PRINCIPAL: MAPA Y SLIDER
 // ==========================================
 app.get('/api/mareas', async (req, res) => {
-    console.log("--- LECTURA DE MAREAS (SHN + INA) ---");
     try {
-        // Hacemos las 3 peticiones en paralelo para que sea rapidísimo
         const [respApi, respPron, respIna] = await Promise.all([
             axios.get(API_SHN, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' }, timeout: 10000 }),
             axios.get(URL_PRONOSTICO, { responseType: 'arraybuffer', timeout: 10000 }).catch(() => null),
-            // Petición al INA usando fechas dinámicas (hoy hasta +4 días)
             axios.get(`${API_INA}&timeStart=now-1days&timeEnd=now+4days`, { timeout: 10000 }).catch(() => null)
         ]);
 
-        // Procesar Pronóstico Corrección SHN
         const picosCorregidos = {}; 
         if (respPron) {
             const htmlPron = new TextDecoder('iso-8859-1').decode(respPron.data);
@@ -76,11 +71,8 @@ app.get('/api/mareas', async (req, res) => {
             });
         }
 
-        // Procesar Datos del INA (Modelo Hidrodinámico)
         let curvaINA = [];
         if (respIna && respIna.data && Array.isArray(respIna.data)) {
-            // El INA devuelve un array de mediciones futuras. Lo guardamos para fusionarlo con SFER.
-            // Formato esperado: [{ time: '2026-02-24T...', valor: 1.45 }, ...]
             curvaINA = respIna.data.map(item => ({
                 fecha: new Date(item.time_start || item.time),
                 altura: parseFloat(item.valor || item.value)
@@ -113,29 +105,21 @@ app.get('/api/mareas', async (req, res) => {
                     if (props.astronomica) {
                         const startIndex = props.astronomica.findIndex(item => item[0] === fechaStr);
                         const datosDesdeAhora = startIndex !== -1 ? props.astronomica.slice(startIndex) : props.astronomica.filter(item => item[0] >= fechaStr);
-                        astroCurva = datosDesdeAhora.slice(0, 72).map(item => item[1]); // Extendemos a 72hs si hay datos
+                        astroCurva = datosDesdeAhora.slice(0, 72).map(item => item[1]);
                     }
                     while (astroCurva.length < 25) astroCurva.push(astroCurva[astroCurva.length - 1] || currentVal);
 
                     let curvaFinal = [...astroCurva];
                     
-                    // FUSIÓN DE MODELOS: Si es San Fernando y tenemos datos del INA, pisamos la curva matemática con la hidrodinámica
                     if (nombrePuerto === 'San Fernando' && curvaINA.length > 0) {
                         curvaFinal = astroCurva.map((valAstro, idx) => {
-                            // Buscamos la hora exacta en el modelo del INA
                             const horaBuscada = new Date(lastDateObj.getTime() + (idx * 60 * 60 * 1000));
-                            // Encontrar el dato del INA más cercano a esa hora
-                            const datoInaCercano = curvaINA.find(d => Math.abs(d.fecha - horaBuscada) < 1800000); // margen de 30 mins
-                            
-                            if (datoInaCercano) {
-                                return parseFloat(datoInaCercano.altura.toFixed(2));
-                            }
-                            // Si no hay dato INA exacto, mantenemos la curva base (o la interpolación)
+                            const datoInaCercano = curvaINA.find(d => Math.abs(d.fecha - horaBuscada) < 1800000); 
+                            if (datoInaCercano) return parseFloat(datoInaCercano.altura.toFixed(2));
                             return valAstro; 
                         });
-                        curvaFinal[0] = currentVal; // El dato 0 siempre es la realidad pura
+                        curvaFinal[0] = currentVal;
                     } else if (currentVal !== null) {
-                        // Si no es San Fernando (o falló INA), aplicamos la corrección meteorológica clásica del SHN
                         const offsetActual = currentVal - astroCurva[0];
                         const picos = picosCorregidos[nombrePuerto] || [];
                         picos.sort((a, b) => a.fecha - b.fecha);
@@ -170,7 +154,7 @@ app.get('/api/mareas', async (req, res) => {
                 }
             });
         }
-        res.json({ status: "ok", source: "SHN + Modelo INA (Delft3D)", data: data });
+        res.json({ status: "ok", source: "SHN + Modelo INA", data: data });
     } catch (error) {
         console.error("ERROR CRÍTICO:", error.message);
         res.status(500).json({ error: "Fallo Scraper/APIs", details: error.message });
@@ -199,62 +183,11 @@ async function chequearMareaBasica(puertoID) {
     } catch (e) { return null; }
 }
 
-// ⏰ ALERTA 1: Martes (2), Miércoles (3) y Viernes (5) a las 17:00 hs
-cron.schedule('0 17 * * 2,3,5', async () => {
-    console.log("Ejecutando revisión de marea (Días de semana)...");
-    const datos = await chequearMareaBasica('SFER'); 
+// LÓGICA DE ALERTAS INTELIGENTES
+function generarTextoAlertas(maxAltura, minAltura) {
+    let alertasExtra = "";
     
-    if (datos && datos.astronomica) {
-        const hoy = new Date().toLocaleString("sv-SE", { timeZone: "America/Argentina/Buenos_Aires" }).split(' ')[0];
-        let resumenHoras = "";
-        let alertaInundacion = false;
-
-        datos.astronomica.forEach(item => {
-            const fechaDato = item[0]; 
-            const altura = item[1];
-            if (fechaDato.includes(hoy)) {
-                const hora = parseInt(fechaDato.split('T')[1].split(':')[0]); 
-                const minutos = fechaDato.split('T')[1].split(':')[1];
-                if (hora >= 18 && hora <= 21) {
-                    resumenHoras += `🔹 ${hora}:${minutos} hs -> <b>${altura}m</b>\n`;
-                    if (altura > 2.00) alertaInundacion = true;
-                }
-            }
-        });
-
-        if (resumenHoras !== "") {
-            let mensaje = `🚣‍♂️ <b>Aviso de Mareas - TBC</b>\nAlturas proyectadas para esta tarde/noche:\n\n${resumenHoras}\n`;
-            if (alertaInundacion) mensaje += `🚨 <b>¡ATENCIÓN!</b> La marea superará los 2.00m. Estacionar lejos y tomar precauciones.`;
-            else mensaje += `✅ Niveles normales. ¡Buen entrenamiento!`;
-            enviarTelegram(mensaje);
-        }
-    }
-}, { timezone: "America/Argentina/Buenos_Aires" });
-
-// ⏰ ALERTA 2: Sábados (6) y Domingos (0) a las 08:00 hs
-cron.schedule('0 8 * * 0,6', async () => {
-    console.log("Ejecutando revisión de marea (Fin de semana)...");
-    const datos = await chequearMareaBasica('SFER'); 
-    if (datos && datos.astronomica) {
-        const hoy = new Date().toLocaleString("sv-SE", { timeZone: "America/Argentina/Buenos_Aires" }).split(' ')[0];
-        let resumenHoras = "";
-        datos.astronomica.forEach(item => {
-            const fechaDato = item[0];
-            const altura = item[1];
-            if (fechaDato.includes(hoy)) {
-                const hora = parseInt(fechaDato.split('T')[1].split(':')[0]);
-                const minutos = fechaDato.split('T')[1].split(':')[1];
-                if (hora >= 8 && hora <= 12) resumenHoras += `🔹 ${hora}:${minutos} hs -> <b>${altura}m</b>\n`;
-            }
-        });
-        if (resumenHoras !== "") enviarTelegram(`🚣‍♂️ <b>Aviso de Mareas - Fin de Semana</b>\nAlturas proyectadas para esta mañana:\n\n${resumenHoras}\n¡Buena remada!`);
-    }
-}, { timezone: "America/Argentina/Buenos_Aires" });
-
-app.get('/api/test-bot', async (req, res) => {
-    await enviarTelegram("🤖 <b>¡Test Exitoso!</b>\nEl backend ahora consume datos del modelo hidrodinámico del INA.");
-    res.send("Mensaje disparado.");
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server listo en ${PORT} con Alertas de Telegram Activadas`));
+    // Prioridad Alta (Inundación)
+    if (maxAltura >= 2.40) {
+        alertasExtra += `🚨 <b>MAREA EXTREMA:</b> NO ESTACIONAR CERCA DEL TBC.\n`;
+    } else if (maxAltura >=
