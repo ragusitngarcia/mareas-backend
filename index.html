@@ -39,7 +39,7 @@
         /* HERO & ALERT BADGE */
         .hero { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; position: relative; }
         
-        .alert-badge { position: absolute; top: -10px; background: var(--alert-color); color: white; padding: 6px 16px; border-radius: 20px; font-weight: bold; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); opacity: 0; transform: translateY(-10px); transition: all 0.3s ease; pointer-events: none; }
+        .alert-badge { position: absolute; top: -10px; background: var(--alert-color); color: white; padding: 6px 16px; border-radius: 20px; font-weight: bold; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); opacity: 0; transform: translateY(-10px); transition: all 0.3s ease; pointer-events: none; text-align: center; line-height: 1.2;}
         body.is-alert .alert-badge { opacity: 1; transform: translateY(0); }
         body.is-alert .tide-val { color: var(--alert-color); text-shadow: 0 10px 40px rgba(239, 68, 68, 0.5); }
 
@@ -110,7 +110,8 @@
         </div>
 
         <div class="hero">
-            <div class="alert-badge" id="ui-alert">🚨 SUPERA TU MUELLE</div>
+            <div class="alert-badge" id="ui-alert"></div>
+            
             <div class="tide-val" id="ui-tide">--<span class="tide-unit">m</span></div>
             
             <div id="ui-trend" class="trend-indicator"></div>
@@ -136,10 +137,10 @@
                 </div>
             </div>
             
-            <input type="range" min="0" max="4" step="1" value="0" id="slider" oninput="updatePredict(this.value)">
+            <input type="range" min="0" max="12" step="1" value="0" id="slider" oninput="updatePredict(this.value)">
             
             <div class="ticks">
-                <span id="tick-start">Registro</span><span>+2h</span><span>+4h</span>
+                <span id="tick-start">Registro</span><span>+6h</span><span>+12h</span>
             </div>
         </div>
 
@@ -147,7 +148,6 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // API EN RENDER
         const API_URL = 'https://mareas-backend-k7ou.onrender.com/api/mareas';
 
         const stations = [
@@ -160,27 +160,26 @@
         let weatherData = [];
         let shnTide = null; 
         
-        // --- MI RÍO: UMBRALES DE USUARIO ---
-        // Cargar desde localStorage el nivel crítico del usuario
+        // Cargar umbral de usuario desde el navegador
         let userThreshold = parseFloat(localStorage.getItem('umbral_muelle')) || null;
 
         function configurarMuelle() {
             let actual = userThreshold ? userThreshold.toFixed(2) : "ej: 1.80";
-            let valor = prompt(`Configurá la altura de alerta para tu muelle (en metros).\nSi la marea supera este número, la pantalla se pondrá roja.\n\nAltura actual configurada: ${actual}m`);
+            let valor = prompt(`Configurá la altura de alerta para tu muelle (en metros).\n\nAltura actual configurada: ${actual}m`);
             if (valor !== null && valor !== "") {
                 let parsed = parseFloat(valor.replace(',', '.'));
                 if (!isNaN(parsed)) {
                     userThreshold = parsed;
                     localStorage.setItem('umbral_muelle', parsed);
-                    alert(`✅ ¡Guardado! Te avisaremos si la marea supera los ${parsed}m.`);
-                    updatePredict(document.getElementById('slider').value); // Actualizar UI
+                    alert(`✅ Guardado! Te avisaremos si la marea supera los ${parsed}m.`);
+                    updatePredict(document.getElementById('slider').value); 
                 } else {
                     alert("Por favor ingresá un número válido.");
                 }
             } else if (valor === "") {
                 userThreshold = null;
                 localStorage.removeItem('umbral_muelle');
-                alert("Alerta desactivada.");
+                alert("Alerta de muelle desactivada.");
                 updatePredict(document.getElementById('slider').value);
             }
         }
@@ -266,6 +265,35 @@
             }
         }
 
+        // --- SISTEMA INTELIGENTE DE ALERTAS MULTIPLES ---
+        function checkAlerts(altura) {
+            let isAlert = false;
+            let alertText = "";
+
+            // Sistema de prioridades (de lo más crítico a lo menos crítico)
+            if (altura >= 2.40) {
+                isAlert = true;
+                alertText = "🚨 MAREA EXTREMA: NO ESTACIONAR CERCA DEL TBC";
+            } else if (altura >= 2.30) {
+                isAlert = true;
+                alertText = "⚠️ RÍO MUY ALTO: AGUA AL BORDE DE RAMPA";
+            } else if (altura <= 0.30) {
+                isAlert = true;
+                alertText = "⚠️ RÍO MUY BAJO: SIN ACCESO A RAMPA";
+            } else if (userThreshold && altura >= userThreshold) {
+                isAlert = true;
+                alertText = `🚨 ALERTA: SUPERA TU MUELLE (${userThreshold}m)`;
+            }
+
+            const alertEl = document.getElementById('ui-alert');
+            if (isAlert) {
+                document.body.classList.add('is-alert');
+                alertEl.innerText = alertText;
+            } else {
+                document.body.classList.remove('is-alert');
+            }
+        }
+
         function updatePredict(val) {
             const hoursAdded = parseInt(val);
             if (hoursAdded === 0) { resetToReal(); return; }
@@ -292,12 +320,12 @@
             document.getElementById('ui-source').className = "status-badge status-est";
 
             let prediction = 0;
-            let pastValue = 0; // Para calcular velocidad
+            let pastValue = 0; 
             let alturaBase = shnTide ? shnTide.altura : 0;
 
             if (shnTide && shnTide.curva && shnTide.curva[hoursAdded] !== undefined) {
                 prediction = shnTide.curva[hoursAdded];
-                pastValue = shnTide.curva[hoursAdded - 1]; // Dato de la hora anterior
+                pastValue = shnTide.curva[hoursAdded - 1]; 
             } else {
                 prediction = alturaBase + Math.sin(hoursAdded * (Math.PI / 6)) * 0.5;
                 pastValue = alturaBase + Math.sin((hoursAdded - 1) * (Math.PI / 6)) * 0.5;
@@ -305,18 +333,11 @@
 
             document.getElementById('ui-tide').innerHTML = prediction.toFixed(2) + '<span class="tide-unit">m</span>';
             
-            // --- VERIFICACIÓN UMBRAL MI RÍO ---
-            if (userThreshold && prediction >= userThreshold) {
-                document.body.classList.add('is-alert');
-            } else {
-                document.body.classList.remove('is-alert');
-            }
+            // VERIFICAR ALERTAS (Club y Usuario)
+            checkAlerts(prediction);
             
-            // --- TENDENCIA Y TASA DE CAMBIO (cm/h) ---
+            // TENDENCIA Y TASA DE CAMBIO (cm/h)
             const trendEl = document.getElementById('ui-trend');
-            const diffFromBase = prediction - alturaBase;
-            
-            // Cálculo de Velocidad (Delta h / Delta t) en centímetros
             const velocityCmH = (prediction - pastValue) * 100;
             const velText = Math.abs(velocityCmH).toFixed(0);
 
@@ -352,7 +373,6 @@
                 document.getElementById('ui-source').innerText = "SHN: DATO REAL Y ACTUALIZADO";
                 document.getElementById('ui-source').className = "status-badge status-shn";
 
-                // Calcular velocidad actual (estimada respecto a la próxima hora)
                 if (shnTide.curva && shnTide.curva.length > 1) {
                     const velocityCmH = (shnTide.curva[1] - shnTide.altura) * 100;
                     const velText = Math.abs(velocityCmH).toFixed(0);
@@ -368,10 +388,9 @@
                     }
                 }
                 
-                // Chequeo de alerta en el tiempo real
-                if (userThreshold && shnTide.altura >= userThreshold) {
-                    document.body.classList.add('is-alert');
-                }
+                // VERIFICAR ALERTAS EN TIEMPO REAL
+                checkAlerts(shnTide.altura);
+                
             } else {
                 document.getElementById('ui-tide').innerText = "--";
                 document.getElementById('ui-time').innerText = "Sin Datos";
