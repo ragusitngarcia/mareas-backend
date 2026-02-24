@@ -9,31 +9,25 @@
     
     <style>
         :root {
-            --bg: #0f172a;
-            --glass: rgba(15, 23, 42, 0.95);
-            --glass-future: rgba(8, 47, 73, 0.95);
-            --accent: #38bdf8;
-            --text: #f8fafc;
-            --shn-color: #22c55e;
-            --est-color: #f59e0b;
+            --bg: #0f172a; --glass: rgba(15, 23, 42, 0.95); --glass-future: rgba(8, 47, 73, 0.95);
+            --accent: #38bdf8; --text: #f8fafc; --shn-color: #22c55e; --est-color: #f59e0b;
+            --alert-color: #ef4444;
         }
 
         body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-        
         #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
-        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(15,23,42,0) 25%, rgba(15,23,42,0.8) 100%); pointer-events: none; z-index: 1; }
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(15,23,42,0) 25%, rgba(15,23,42,0.85) 100%); pointer-events: none; z-index: 1; }
 
         .ui-layer { position: relative; z-index: 10; flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 15px; pointer-events: none; }
         .interactive { pointer-events: auto; }
 
-        /* HEADER */
-        .header-card {
-            background: var(--glass); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 12px 16px;
-            display: flex; justify-content: space-between; align-items: center; backdrop-filter: blur(10px);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3); transition: border-color 0.3s;
-        }
-        .station-title { font-size: 0.9rem; font-weight: 800; color: var(--accent); text-transform: uppercase; margin: 0; }
+        /* HEADER & SETTINGS */
+        .header-card { background: var(--glass); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; backdrop-filter: blur(10px); box-shadow: 0 4px 20px rgba(0,0,0,0.3); transition: border-color 0.3s; }
+        .station-title { font-size: 0.9rem; font-weight: 800; color: var(--accent); text-transform: uppercase; margin: 0; display: flex; align-items: center; gap: 8px;}
         
+        .btn-settings { background: rgba(255,255,255,0.1); border: none; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: white; transition: background 0.3s; }
+        .btn-settings:hover { background: rgba(255,255,255,0.2); }
+
         .status-badge { font-size: 0.65rem; padding: 2px 8px; border-radius: 10px; margin-top: 4px; display: inline-block; font-weight: bold; border: 1px solid transparent; transition: all 0.3s; }
         .status-shn { background: rgba(34, 197, 94, 0.2); color: var(--shn-color); border-color: var(--shn-color); }
         .status-est { background: rgba(245, 158, 11, 0.2); color: var(--est-color); border-color: var(--est-color); }
@@ -42,66 +36,51 @@
         .temp-val { font-size: 1.5rem; font-weight: 300; line-height: 1; }
         .weather-desc { font-size: 0.7rem; opacity: 0.7; }
 
-        /* HERO CENTER */
-        .hero { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        /* HERO & ALERT BADGE */
+        .hero { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; position: relative; }
         
-        .tide-val { font-size: 5.5rem; font-weight: 800; line-height: 0.9; letter-spacing: -3px; text-shadow: 0 10px 40px rgba(0,0,0,0.5); transition: color 0.3s; }
+        .alert-badge { position: absolute; top: -10px; background: var(--alert-color); color: white; padding: 6px 16px; border-radius: 20px; font-weight: bold; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); opacity: 0; transform: translateY(-10px); transition: all 0.3s ease; pointer-events: none; }
+        body.is-alert .alert-badge { opacity: 1; transform: translateY(0); }
+        body.is-alert .tide-val { color: var(--alert-color); text-shadow: 0 10px 40px rgba(239, 68, 68, 0.5); }
+
+        .tide-val { font-size: 5.5rem; font-weight: 800; line-height: 0.9; letter-spacing: -3px; text-shadow: 0 10px 40px rgba(0,0,0,0.5); transition: color 0.3s, text-shadow 0.3s; }
         .tide-unit { font-size: 2rem; font-weight: 300; opacity: 0.6; }
         
-        /* TENDENCIA VISUAL */
-        .trend-indicator { font-size: 1.2rem; font-weight: 800; margin-top: -5px; height: 24px; letter-spacing: 1px; text-transform: uppercase; transition: all 0.3s ease; text-shadow: 0 2px 10px rgba(0,0,0,0.5); }
-        .trend-up { color: #4ade80; } /* Verde - Sube */
-        .trend-down { color: #f87171; } /* Rojo - Baja */
-        .trend-stable { color: #94a3b8; } /* Gris - Estable */
+        /* TENDENCIA Y VELOCIDAD (cm/h) */
+        .trend-indicator { font-size: 1.1rem; font-weight: 800; margin-top: 5px; height: 24px; letter-spacing: 0.5px; text-transform: uppercase; transition: all 0.3s ease; text-shadow: 0 2px 10px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; gap: 8px;}
+        .trend-up { color: #4ade80; }
+        .trend-down { color: #f87171; }
+        .trend-stable { color: #94a3b8; }
+        .velocity-pill { background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; color: white; backdrop-filter: blur(5px);}
 
-        .wind-pill {
-            display: flex; align-items: center; gap: 15px; background: rgba(0,0,0,0.6); margin-top: 20px;
-            padding: 8px 24px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(10px);
-        }
-        .wind-circle {
-            width: 40px; height: 40px; background: var(--accent); border-radius: 50%;
-            display: flex; justify-content: center; align-items: center;
-            box-shadow: 0 0 15px rgba(56, 189, 248, 0.4); transition: transform 0.3s ease-out;
-        }
+        .wind-pill { display: flex; align-items: center; gap: 15px; background: rgba(0,0,0,0.6); margin-top: 20px; padding: 8px 24px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(10px); }
+        .wind-circle { width: 40px; height: 40px; background: var(--accent); border-radius: 50%; display: flex; justify-content: center; align-items: center; box-shadow: 0 0 15px rgba(56, 189, 248, 0.4); transition: transform 0.3s ease-out; }
         .nav-arrow { width: 20px; height: 20px; fill: #0f172a; }
 
-        /* FOOTER CONTROLS */
+        /* CONTROLS */
         .controls { background: var(--glass); border-radius: 24px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); position: relative; transition: background 0.3s; }
-        
         .time-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 10px; }
         .time-display { font-size: 1.4rem; font-weight: 700; color: white; line-height: 1; font-variant-numeric: tabular-nums; }
         .time-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; }
 
-        .btn-reset {
-            position: absolute; top: -45px; left: 50%; transform: translateX(-50%) scale(0);
-            background: var(--accent); color: #0f172a; border: none; padding: 8px 16px;
-            border-radius: 30px; font-weight: 700; box-shadow: 0 0 15px rgba(56, 189, 248, 0.5);
-            cursor: pointer; transition: all 0.3s; font-size: 0.8rem; z-index: 20;
-        }
+        .btn-reset { position: absolute; top: -45px; left: 50%; transform: translateX(-50%) scale(0); background: var(--accent); color: #0f172a; border: none; padding: 8px 16px; border-radius: 30px; font-weight: 700; box-shadow: 0 0 15px rgba(56, 189, 248, 0.5); cursor: pointer; transition: all 0.3s; font-size: 0.8rem; z-index: 20; }
         .btn-reset.visible { transform: translateX(-50%) scale(1); }
 
-        /* SLIDER */
         input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; height: 30px; position: relative; z-index: 5; }
         input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; background: rgba(255,255,255,0.2); border-radius: 3px; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 26px; width: 26px; background: white; border: 4px solid var(--accent); border-radius: 50%; margin-top: -10px; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
-
         .ticks { display: flex; justify-content: space-between; margin-top: 5px; font-size: 0.65rem; color: rgba(255,255,255,0.4); }
 
-        /* LOADER */
+        /* MAP PINS & LOADER */
         .loader { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.9); padding: 20px; border-radius: 12px; z-index: 100; text-align: center; font-size: 0.8rem; transition: opacity 0.3s; }
         .spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,0.1); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s infinite linear; margin: 0 auto 10px; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .hidden { opacity: 0; pointer-events: none; }
-
-        /* ESTADOS */
         body.is-future .header-card { border-color: var(--accent); background: var(--glass-future); }
         body.is-future .controls { background: var(--glass-future); }
-        body.is-future .tide-val { color: var(--accent); opacity: 0.9; }
-
-        /* PINS */
+        body.is-future:not(.is-alert) .tide-val { color: var(--accent); opacity: 0.9; }
         .pin { width: 14px; height: 14px; background: var(--col); border: 2px solid white; border-radius: 50%; box-shadow: 0 0 10px var(--col); cursor: pointer; transition: transform 0.2s; }
         .pin.active { transform: scale(1.8); border-color: #0f172a; box-shadow: 0 0 20px var(--col); }
-
     </style>
 </head>
 <body>
@@ -118,7 +97,10 @@
         
         <div class="header-card interactive">
             <div>
-                <h1 class="station-title" id="ui-name">San Fernando</h1>
+                <h1 class="station-title" id="ui-name">
+                    San Fernando 
+                    <button class="btn-settings" onclick="configurarMuelle()" title="Configurar Umbral de Muelle">⚙️</button>
+                </h1>
                 <div class="status-badge status-est" id="ui-source">INICIANDO...</div>
             </div>
             <div class="weather-box">
@@ -128,7 +110,9 @@
         </div>
 
         <div class="hero">
+            <div class="alert-badge" id="ui-alert">🚨 SUPERA TU MUELLE</div>
             <div class="tide-val" id="ui-tide">--<span class="tide-unit">m</span></div>
+            
             <div id="ui-trend" class="trend-indicator"></div>
             
             <div class="wind-pill">
@@ -166,25 +150,45 @@
         // API EN RENDER
         const API_URL = 'https://mareas-backend-k7ou.onrender.com/api/mareas';
 
-        // ESTACIONES
         const stations = [
             { id: 'sf', name: 'San Fernando', rssKey: 'SAN FERNANDO', lat: -34.44, lng: -58.55, amp: 0.8, color: '#38bdf8' },
             { id: 'ba', name: 'Buenos Aires', rssKey: 'BUENOS AIRES', lat: -34.59, lng: -58.36, amp: 0.9, color: '#a855f7' },
-            { id: 'lp', name: 'La Plata', rssKey: 'LA PLATA', lat: -34.84, lng: -57.90, amp: 0.9, color: '#d946ef' },
-            { id: 'mdq', name: 'Mar del Plata', rssKey: 'MAR DEL PLATA', lat: -38.03, lng: -57.53, amp: 1.5, color: '#f59e0b' },
-            { id: 'bb', name: 'Bahía Blanca', rssKey: 'PUERTO BELGRANO', lat: -38.89, lng: -62.10, amp: 3.5, color: '#3b82f6' }
+            { id: 'lp', name: 'La Plata', rssKey: 'LA PLATA', lat: -34.84, lng: -57.90, amp: 0.9, color: '#d946ef' }
         ];
 
         let map, currentSt = stations[0];
         let weatherData = [];
-        let shnTide = null; // { altura, hora, curva: [] }
+        let shnTide = null; 
+        
+        // --- MI RÍO: UMBRALES DE USUARIO ---
+        // Cargar desde localStorage el nivel crítico del usuario
+        let userThreshold = parseFloat(localStorage.getItem('umbral_muelle')) || null;
+
+        function configurarMuelle() {
+            let actual = userThreshold ? userThreshold.toFixed(2) : "ej: 1.80";
+            let valor = prompt(`Configurá la altura de alerta para tu muelle (en metros).\nSi la marea supera este número, la pantalla se pondrá roja.\n\nAltura actual configurada: ${actual}m`);
+            if (valor !== null && valor !== "") {
+                let parsed = parseFloat(valor.replace(',', '.'));
+                if (!isNaN(parsed)) {
+                    userThreshold = parsed;
+                    localStorage.setItem('umbral_muelle', parsed);
+                    alert(`✅ ¡Guardado! Te avisaremos si la marea supera los ${parsed}m.`);
+                    updatePredict(document.getElementById('slider').value); // Actualizar UI
+                } else {
+                    alert("Por favor ingresá un número válido.");
+                }
+            } else if (valor === "") {
+                userThreshold = null;
+                localStorage.removeItem('umbral_muelle');
+                alert("Alerta desactivada.");
+                updatePredict(document.getElementById('slider').value);
+            }
+        }
 
         function init() {
-            // Inicializar mapa sin controles molestos
             map = L.map('map', { zoomControl: false, attributionControl: false }).setView([-34.5, -58.5], 10);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
 
-            // Agregar pines
             stations.forEach(s => {
                 const icon = L.divIcon({ className: 'custom', html: `<div class="pin" id="pin-${s.id}" style="--col: ${s.color}"></div>`, iconSize: [14, 14] });
                 L.marker([s.lat, s.lng], {icon: icon}).addTo(map).on('click', () => loadStation(s));
@@ -214,9 +218,8 @@
 
         async function loadStation(s) {
             currentSt = s;
-            document.getElementById('ui-name').innerText = s.name;
+            document.getElementById('ui-name').innerHTML = `${s.name} <button class="btn-settings" onclick="configurarMuelle()" title="Configurar Muelle">⚙️</button>`;
             
-            // UI Update
             document.querySelectorAll('.pin').forEach(p => p.classList.remove('active'));
             document.getElementById(`pin-${s.id}`).classList.add('active');
             map.flyTo([s.lat, s.lng], 12);
@@ -225,17 +228,12 @@
             loader.classList.remove('hidden');
 
             try {
-                // Fetch Clima
                 document.getElementById('loader-txt').innerText = "CLIMA...";
                 await fetchWeather(s);
-
-                // Fetch Backend SHN
-                document.getElementById('loader-txt').innerText = "SHN DESDE RENDER...";
+                document.getElementById('loader-txt').innerText = "SHN + INA...";
                 await fetchRenderAPI(s);
-
-            } catch (e) {
-                console.error(e);
-            } finally {
+            } catch (e) { console.error(e); } 
+            finally {
                 resetToReal();
                 loader.classList.add('hidden');
             }
@@ -246,41 +244,28 @@
             try {
                 const res = await fetch(API_URL);
                 const json = await res.json();
-                
                 if (json.status === 'ok') {
                     const found = json.data.find(d => d.estacion.toUpperCase().includes(station.rssKey));
-                    if (found) {
-                        shnTide = found;
-                    }
+                    if (found) shnTide = found;
                 }
-            } catch (e) {
-                console.warn("Fallo conexión con Render:", e);
-            }
+            } catch (e) { console.warn("Fallo conexión con Render:", e); }
         }
 
         async function fetchWeather(s) {
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${s.lat}&longitude=${s.lng}&current_weather=true&hourly=temperature_2m,windspeed_10m,winddirection_10m,weathercode&forecast_days=2`;
             const res = await fetch(url);
             const data = await res.json();
-            
             const h = data.hourly;
             const nowIdx = new Date().getHours();
             weatherData = [];
-            
             for(let i=0; i<=24; i++) {
                 const idx = nowIdx + i;
                 if(h.time[idx]) {
-                    weatherData.push({
-                        temp: h.temperature_2m[idx],
-                        spd: h.windspeed_10m[idx],
-                        dir: h.winddirection_10m[idx],
-                        code: h.weathercode[idx]
-                    });
+                    weatherData.push({ temp: h.temperature_2m[idx], spd: h.windspeed_10m[idx], dir: h.winddirection_10m[idx], code: h.weathercode[idx] });
                 }
             }
         }
 
-        // --- LÓGICA DEL SLIDER (ACORTADO Y CON TENDENCIA) ---
         function updatePredict(val) {
             const hoursAdded = parseInt(val);
             if (hoursAdded === 0) { resetToReal(); return; }
@@ -288,7 +273,6 @@
             document.body.classList.add('is-future');
             document.getElementById('btn-reset').classList.add('visible');
 
-            // Calcular Hora Futura Respetando Minutos Originales
             let baseH = 0, baseM = 0;
             if (shnTide && shnTide.hora && shnTide.hora.includes(':')) {
                 [baseH, baseM] = shnTide.hora.split(':').map(Number);
@@ -303,40 +287,50 @@
             const mm = String(baseM).padStart(2, '0');
             
             document.getElementById('ui-time').innerText = `${hh}:${mm} hs`;
-            document.getElementById('time-label-top').innerText = "Pronóstico Corregido (Clima + Astro)";
-            document.getElementById('ui-source').innerText = "PRONÓSTICO METEOROLÓGICO";
+            document.getElementById('time-label-top').innerText = "Pronóstico SHN + INA";
+            document.getElementById('ui-source').innerText = "PRONÓSTICO (MODELO INA)";
             document.getElementById('ui-source').className = "status-badge status-est";
 
-            // Obtener Predicción
             let prediction = 0;
+            let pastValue = 0; // Para calcular velocidad
             let alturaBase = shnTide ? shnTide.altura : 0;
 
             if (shnTide && shnTide.curva && shnTide.curva[hoursAdded] !== undefined) {
                 prediction = shnTide.curva[hoursAdded];
+                pastValue = shnTide.curva[hoursAdded - 1]; // Dato de la hora anterior
             } else {
-                // Fallback de contingencia
                 prediction = alturaBase + Math.sin(hoursAdded * (Math.PI / 6)) * 0.5;
+                pastValue = alturaBase + Math.sin((hoursAdded - 1) * (Math.PI / 6)) * 0.5;
             }
 
             document.getElementById('ui-tide').innerHTML = prediction.toFixed(2) + '<span class="tide-unit">m</span>';
             
-            // --- TENDENCIA DE MAREA (SUBE / BAJA) ---
+            // --- VERIFICACIÓN UMBRAL MI RÍO ---
+            if (userThreshold && prediction >= userThreshold) {
+                document.body.classList.add('is-alert');
+            } else {
+                document.body.classList.remove('is-alert');
+            }
+            
+            // --- TENDENCIA Y TASA DE CAMBIO (cm/h) ---
             const trendEl = document.getElementById('ui-trend');
-            const diffValue = prediction - alturaBase;
-            const difText = Math.abs(diffValue).toFixed(2); // Diferencia en positivo siempre
+            const diffFromBase = prediction - alturaBase;
+            
+            // Cálculo de Velocidad (Delta h / Delta t) en centímetros
+            const velocityCmH = (prediction - pastValue) * 100;
+            const velText = Math.abs(velocityCmH).toFixed(0);
 
-            if (diffValue > 0) {
-                trendEl.innerHTML = `SUBE ↗ (+${difText}m)`;
+            if (velocityCmH > 0.5) {
+                trendEl.innerHTML = `SUBE ↗ <span class="velocity-pill">+${velText} cm/h</span>`;
                 trendEl.className = 'trend-indicator trend-up';
-            } else if (diffValue < 0) {
-                trendEl.innerHTML = `BAJA ↘ (-${difText}m)`;
+            } else if (velocityCmH < -0.5) {
+                trendEl.innerHTML = `BAJA ↘ <span class="velocity-pill">-${velText} cm/h</span>`;
                 trendEl.className = 'trend-indicator trend-down';
             } else {
-                trendEl.innerHTML = `ESTABLE → (0.00m)`;
+                trendEl.innerHTML = `ESTABLE → <span class="velocity-pill">0 cm/h</span>`;
                 trendEl.className = 'trend-indicator trend-stable';
             }
 
-            // Actualizar Clima
             const w = weatherData[hoursAdded] || weatherData[0];
             updateWeatherUI(w);
         }
@@ -344,12 +338,11 @@
         function resetToReal() {
             document.getElementById('slider').value = 0;
             document.body.classList.remove('is-future');
+            document.body.classList.remove('is-alert');
             document.getElementById('btn-reset').classList.remove('visible');
             
-            // Limpiar la tendencia cuando vemos el dato real
-            document.getElementById('ui-trend').innerHTML = '';
-            document.getElementById('ui-trend').className = 'trend-indicator';
-
+            const trendEl = document.getElementById('ui-trend');
+            
             if(weatherData[0]) updateWeatherUI(weatherData[0]);
 
             if (shnTide) {
@@ -358,10 +351,32 @@
                 document.getElementById('time-label-top').innerText = "Último Registro Real";
                 document.getElementById('ui-source').innerText = "SHN: DATO REAL Y ACTUALIZADO";
                 document.getElementById('ui-source').className = "status-badge status-shn";
+
+                // Calcular velocidad actual (estimada respecto a la próxima hora)
+                if (shnTide.curva && shnTide.curva.length > 1) {
+                    const velocityCmH = (shnTide.curva[1] - shnTide.altura) * 100;
+                    const velText = Math.abs(velocityCmH).toFixed(0);
+                    if (velocityCmH > 0.5) {
+                        trendEl.innerHTML = `SUBE ↗ <span class="velocity-pill">+${velText} cm/h</span>`;
+                        trendEl.className = 'trend-indicator trend-up';
+                    } else if (velocityCmH < -0.5) {
+                        trendEl.innerHTML = `BAJA ↘ <span class="velocity-pill">-${velText} cm/h</span>`;
+                        trendEl.className = 'trend-indicator trend-down';
+                    } else {
+                        trendEl.innerHTML = `ESTABLE → <span class="velocity-pill">0 cm/h</span>`;
+                        trendEl.className = 'trend-indicator trend-stable';
+                    }
+                }
+                
+                // Chequeo de alerta en el tiempo real
+                if (userThreshold && shnTide.altura >= userThreshold) {
+                    document.body.classList.add('is-alert');
+                }
             } else {
                 document.getElementById('ui-tide').innerText = "--";
                 document.getElementById('ui-time').innerText = "Sin Datos";
                 document.getElementById('ui-source').className = "status-badge status-est";
+                trendEl.innerHTML = '';
             }
         }
 
@@ -376,7 +391,6 @@
             document.getElementById('ui-arrow').style.transform = `rotate(${w.dir + 180}deg)`;
         }
 
-        // Arrancar
         init();
     </script>
 </body>
